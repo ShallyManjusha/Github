@@ -6,7 +6,6 @@ import logging
 import uuid
 from datetime import datetime
 
-
 app = Flask(__name__)
 
 # Set up logging
@@ -62,48 +61,35 @@ def check_glpi_connection():
         logging.error(f'Error checking GLPI connection: {str(e)}')
         return {"status": "error", "message": str(e)}
 
-# Function to fetch status options
-def fetch_status_options(session_token):
+# Function to add a new user
+def add_user(session_token, name, email, is_active="1"):
     headers = {
         'Content-Type': 'application/json',
         'Authorization': f'user_token {GLPI_API_TOKEN}',
         'App-Token': GLPI_APP_TOKEN,
         'Session-Token': session_token
     }
-    try:
-        response = requests.get(f'{GLPI_API_URL}/TicketStatus', headers=headers)
-        logging.debug(f'GLPI fetch status options response: {response.json()}')
-        
-        if response.status_code == 200:
-            return {"status": "success", "data": response.json()}
-        else:
-            return {"status": "fail", "message": response.json(), "status_code": response.status_code}
-    except requests.exceptions.RequestException as e:
-        logging.error(f'Error fetching status options: {str(e)}')
-        return {"status": "error", "message": str(e)}
-
-# Function to fetch request source options
-def fetch_request_source_options(session_token):
-    headers = {
-        'Content-Type': 'application/json',
-        'Authorization': f'user_token {GLPI_API_TOKEN}',
-        'App-Token': GLPI_APP_TOKEN,
-        'Session-Token': session_token
+    user_data = {
+        "input": {
+            "name": name,
+            "email": email,
+            "is_active": is_active
+        }
     }
     try:
-        response = requests.get(f'{GLPI_API_URL}/RequestSource', headers=headers)
-        logging.debug(f'GLPI fetch request source options response: {response.json()}')
-        
-        if response.status_code == 200:
-            return {"status": "success", "data": response.json()}
+        response = requests.post(f'{GLPI_API_URL}/User', headers=headers, json=user_data)
+        logging.debug(f'GLPI add user response: {response.json()}')
+
+        if response.status_code == 201:
+            return {"status": "success", "user_id": response.json()["id"]}
         else:
             return {"status": "fail", "message": response.json(), "status_code": response.status_code}
     except requests.exceptions.RequestException as e:
-        logging.error(f'Error fetching request source options: {str(e)}')
+        logging.error(f'Error adding user: {str(e)}')
         return {"status": "error", "message": str(e)}
 
-# Function to raise a ticket in GLPI
-def raise_ticket(description, session_token, status, date, request_source, requester_email):
+# Function to raise a ticket
+def raise_ticket(description, session_token, status, date, request_source, requester_id):
     global created_ticket_title  # Use the global variable
 
     headers = {
@@ -124,12 +110,7 @@ def raise_ticket(description, session_token, status, date, request_source, reque
             "urgency": 3,
             "date": date,
             "requesttypes_id": request_source,
-            "_users_id_requester": 0,  # Indicates user login through email
-            "_users_id_requester_notif": {
-                "use_notification": 1,
-                "alternative_email": requester_email  # Update this field accordingly
-            },
-            # "_groups_id_assign": 2,  # Update this field accordingly
+            "_users_id_requester": requester_id,  # Use requester ID
             "type": 1
         }
     }
@@ -143,10 +124,8 @@ def raise_ticket(description, session_token, status, date, request_source, reque
         if response.status_code == 201:
             ticket_id = response.json()["id"]
             created_ticket_title = ticket_name  # Store the ticket title
-            # ticket_details = fetch_ticket_details(session_token, ticket_id)
-            return {"status": "success", "ticket_number": ticket_id, "ticket_title": ticket_name}
+            return {"status": "success", "user_id":requester_id,"ticket_number": ticket_id, "ticket_title": ticket_name}
         else:
-            logging.debug(f'GLPI raise ticket failed response: {response.json()}')
             return {"status": "fail", "message": response.json(), "status_code": response.status_code}
     except requests.exceptions.RequestException as e:
         logging.error(f'Error raising ticket: {str(e)}')
@@ -157,8 +136,35 @@ def fetch_created_ticket_title():
     if created_ticket_title:
         return {"ticket_title": created_ticket_title}
     else:
-        return {"status": "fail", "message": "No ticket title available"}
+        return {"status": "fail", "message14": "No ticket title available"}
     
+# Function to check if a user exists
+def check_user_exists(session_token, name):
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'user_token {GLPI_API_TOKEN}',
+        'App-Token': GLPI_APP_TOKEN,
+        'Session-Token': session_token
+    }
+    params = {
+        'searchText[name]': name
+    }
+    try:
+        response = requests.get(f'{GLPI_API_URL}/User', headers=headers, params=params)
+        logging.debug(f'GLPI check user response: {response.json()}')
+        
+        if response.status_code == 200:
+            users = response.json()
+            if users:  # If any user is found
+                return {"status": "success", "user_id": users[0]["id"]}
+            else:
+                return {"status": "fail", "message": "User not found"}
+        else:
+            return {"status": "fail", "message": response.json(), "status_code": response.status_code}
+    except requests.exceptions.RequestException as e:
+        logging.error(f'Error checking user: {str(e)}')
+        return {"status": "error", "message": str(e)}
+
 def parse_and_format_date(date_str):
     try:
         # Attempt to parse date in YYYY-MM-DD format
@@ -168,7 +174,11 @@ def parse_and_format_date(date_str):
             # Attempt to parse date in DD-MM-YYYY format
             date_obj = datetime.strptime(date_str, '%d-%m-%Y')
         except ValueError:
-            raise ValueError("Invalid date format. Use YYYY-MM-DD or DD-MM-YYYY.")
+            try:
+                # Attempt to parse date in MM-DD-YYYY format
+                date_obj = datetime.strptime(date_str, '%m-%d-%Y')
+            except ValueError:
+                raise ValueError("Invalid date format. Use YYYY-MM-DD, DD-MM-YYYY, or MM-DD-YYYY.")
     
     # Convert to standard format YYYY-MM-DD HH:MM:SS
     return date_obj.strftime('%Y-%m-%d 00:00:00')
@@ -186,20 +196,21 @@ def check_connection():
     result = check_glpi_connection()
     return jsonify(result)
 
-@app.route('/raise_ticket', methods=['POST'])
-def api_raise_ticket():
+@app.route('/add_user_and_raise_ticket', methods=['POST'])
+def add_user_and_raise_ticket():
     data = request.get_json()
+    user_name = data.get('name')
+    user_email = data.get('email')
     description = data.get('description')
     status = data.get('status')
-    date = data.get('date')  # Changed from 'opening_datetime' to 'date'
-    requester_email = data.get('email')  # Use 'email' field
+    date = data.get('date')
     request_source = data.get('request_source')
 
-    logging.debug(f'API raise_ticket received data: {data}')
+    logging.debug(f'API add_user_and_raise_ticket received data: {data}')
 
     # Validate required fields
-    if not description or not status or not date or not request_source or not requester_email:
-        return jsonify({"status": "error", "message": "Description, status, date, request_source, and requester_email are required"}), 400
+    if not user_name or not user_email or not description or not status or not date or not request_source:
+        return jsonify({"status": "error", "message": "Name, email, description, status, date, and request_source are required"}), 400
 
     # Map status and request source to internal IDs
     status_id = STATUS_MAPPING.get(status, None)
@@ -216,14 +227,26 @@ def api_raise_ticket():
         if session_result['status'] == 'success':
             session_token = session_result['session_token']
 
-             # Parse and format date
+            # Parse and format date
             try:
                 formatted_date = parse_and_format_date(date)
             except ValueError as e:
                 return jsonify({"status": "error", "message": str(e)}), 400
-
+            
+            # Check if user exists
+            user_check_result = check_user_exists(session_token, user_name)
+            if user_check_result['status'] == 'success':
+                requester_id = user_check_result['user_id']
+            else:
+                # Add user
+                user_result = add_user(session_token, user_name, user_email)
+                if user_result['status'] == 'success':
+                    requester_id = user_result['user_id']
+                else:
+                    return jsonify(user_result)
+            
             # Raise ticket
-            ticket_result = raise_ticket(description, session_token, status_id, formatted_date, request_source_id, requester_email)
+            ticket_result = raise_ticket(description, session_token, status_id, formatted_date, request_source_id, requester_id)
             return jsonify(ticket_result)
         else:
             return jsonify(session_result)
@@ -234,11 +257,10 @@ def api_raise_ticket():
         logging.error(f'Exception: {str(e)}')
         return jsonify({"status": "error", "message": str(e)}), 500
 
-
-@app.route('/get_created_ticket_title', methods=['GET'])
+@app.route('/fetch_created_ticket_title', methods=['GET'])
 def get_created_ticket_title():
-    result = fetch_created_ticket_title()
-    return jsonify(result)
+    ticket_title_result = fetch_created_ticket_title()
+    return jsonify(ticket_title_result)
 
-if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000, debug=True)
+if __name__ == '__main__':
+    app.run(debug=True)
