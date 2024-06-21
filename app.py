@@ -160,18 +160,27 @@ def fetch_created_ticket_title():
         return {"status": "fail", "message": "No ticket title available"}
     
 def parse_and_format_date(date_str):
-    try:
-        # Attempt to parse date in YYYY-MM-DD format
-        date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-    except ValueError:
-        try:
-            # Attempt to parse date in DD-MM-YYYY format
-            date_obj = datetime.strptime(date_str, '%d-%m-%Y')
-        except ValueError:
-            raise ValueError("Invalid date format. Use YYYY-MM-DD or DD-MM-YYYY.")
+    formats = [
+        '%Y-%m-%d %H:%M:%S',
+        '%d-%m-%Y %H:%M:%S',
+        '%m-%d-%Y %H:%M:%S',
+        '%Y-%m-%d',
+        '%d-%m-%Y',
+        '%m-%d-%Y'
+    ]
     
-    # Convert to standard format YYYY-MM-DD HH:MM:SS
-    return date_obj.strftime('%Y-%m-%d 00:00:00')
+    for fmt in formats:
+        try:
+            date_obj = datetime.strptime(date_str, fmt)
+            # If no time part is provided, add 00:00:00
+            if len(date_str.split()) == 1:
+                return date_obj.strftime('%Y-%m-%d 00:00:00')
+            else:
+                return date_obj.strftime('%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            continue
+    
+    raise ValueError("Invalid date format. Use YYYY-MM-DD, DD-MM-YYYY, or MM-DD-YYYY, with or without HH:MM:SS.")
 
 @app.route('/', methods=['GET'])
 def home():
